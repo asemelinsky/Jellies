@@ -12,6 +12,8 @@
 #endif
 
 #include "audio.h"
+#include "basket.h"
+#include "obstacles.h"
 #include "eyes.h"
 #include "physics.h"
 #include "render.h"
@@ -127,6 +129,7 @@ void App::Reset() {
     for (Body& b : world.bodies) renderer.DestroyBodyMesh(b);
     world.Clear();
     splash::Clear();
+    basket::Reset();
     hovered = -1;
     grabHistory.clear();
     spawnTimer = 0;
@@ -142,6 +145,8 @@ void App::HandleInput() {
     if (IsKeyPressed(KEY_R)) Reset();
     if (IsKeyPressed(KEY_H)) showPanel = !showPanel;
     if (IsKeyPressed(KEY_M)) audio::SetMuted(!audio::IsMuted());
+    if (IsKeyPressed(KEY_O)) obstacles::SetEnabled(!obstacles::Enabled());
+    if (IsKeyPressed(KEY_G)) basket::SetEnabled(!basket::Enabled());
 #if !defined(PLATFORM_WEB)
     // In the browser F11/Esc are handled by the browser itself and vsync is always on
     if (IsKeyPressed(KEY_F11) || (IsKeyPressed(KEY_ENTER) && (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))))
@@ -230,6 +235,8 @@ void App::Simulate(float frameDt) {
     double t0 = GetTime();
     world.Step(dt, substeps);
     splash::Update(world, dt);
+    obstacles::Update(world, dt);
+    basket::Update(world, dt);
     physicsMs = physicsMs * 0.9f + (float)(GetTime() - t0) * 1000.0f * 0.1f;
     simTime += dt;
 
@@ -284,7 +291,7 @@ void App::DrawUI() {
     }
 
     const float x = 14, w = 300;
-    ui::Panel(Rectangle{x - 4, 8, w + 28, 408});
+    ui::Panel(Rectangle{x - 4, 8, w + 28, 452});
     float y = 18;
     ui::Label("Желейки", Vector2{x + 10, y}, 28, text);
     y += 42;
@@ -311,6 +318,10 @@ void App::DrawUI() {
         renderer.SetShadowQuality((renderer.GetShadowQuality() + 1) % SHADOW_QUALITY_COUNT);
     if (ui::Button(Rectangle{x + 210, y, 100, 32}, "+ Желейка")) Spawn();
     y += 44;
+    if (ui::Button(Rectangle{x + 10, y, 150, 32}, "Перешкоди", obstacles::Enabled()))
+        obstacles::SetEnabled(!obstacles::Enabled());
+    if (ui::Button(Rectangle{x + 170, y, 140, 32}, "Гра «Кошик»", basket::Enabled())) basket::SetEnabled(!basket::Enabled());
+    y += 44;
 
     std::snprintf(buf, sizeof buf, "Желейок: %d    нова через %d с", (int)world.bodies.size(),
                   (int)std::ceil(kSpawnInterval - spawnTimer));
@@ -318,9 +329,9 @@ void App::DrawUI() {
 
     const char* help1 = "ЛКМ — схопити й кинути  ·  ПКМ — камера  ·  Коліщатко — зум  ·  Пробіл — желейка (Shift — 10)";
 #if defined(PLATFORM_WEB)
-    const char* help2 = "P — пауза  ·  R — скинути  ·  H — панель  ·  M — звук  ·  F11 — повний екран";
+    const char* help2 = "P — пауза  ·  R — скинути  ·  O — перешкоди  ·  G — кошик  ·  H — панель  ·  M — звук  ·  F11 — повний екран";
 #else
-    const char* help2 = "P — пауза  ·  R — скинути  ·  H — панель  ·  M — звук  ·  V — верт. синхр.  ·  F11 — повний екран";
+    const char* help2 = "P — пауза  ·  R — скинути  ·  O — перешкоди  ·  G — кошик  ·  H — панель  ·  M — звук  ·  V — верт. синхр.  ·  F11 — повний екран";
 #endif
     ui::Label(help1, Vector2{14, GetScreenHeight() - 50.0f}, 16, dim);
     ui::Label(help2, Vector2{14, GetScreenHeight() - 28.0f}, 16, dim);
@@ -386,10 +397,14 @@ bool App::Frame() {
     audio::Update(frameDt);
     renderer.UpdateBodyMeshes(world);
     SkyState sky = ComputeSky(dayPhase);
+    renderer.sceneObjects.clear();
+    obstacles::AppendSceneObjects(renderer.sceneObjects);
+    basket::AppendSceneObjects(renderer.sceneObjects);
 
     BeginDrawing();
     renderer.Render(orbit.cam, world, sky, hovered, world.GrabbedBody(), simTime);
     DrawUI();
+    basket::DrawHUD();
     if (bench) {
         const char* text = benchResult.empty() ? "Тест продуктивності… (25 с)" : benchResult.c_str();
         Vector2 m = ui::Measure(text, 22);
@@ -436,6 +451,8 @@ int main(int argc, char** argv) {
     if (bench) app.vsync = false;
     BuildShapeTemplates(app.templates);
     eyes::Init(app.templates);
+    obstacles::Init(app.world);
+    basket::Init(app.world);
     if (!app.renderer.Init(GetScreenWidth(), GetScreenHeight())) {
         CloseWindow();
         return 1;
@@ -461,6 +478,8 @@ int main(int argc, char** argv) {
     splash::Shutdown();
     audio::Shutdown();
     eyes::Shutdown();
+    basket::Shutdown(app.world);
+    obstacles::Shutdown(app.world);
     ui::Shutdown();
     app.renderer.Shutdown();
     CloseWindow();

@@ -19,7 +19,7 @@ Font LoadSized(int size) {
     std::vector<int> cps;
     for (int c = 32; c < 127; c++) cps.push_back(c);
     for (int c = 0x400; c < 0x460; c++) cps.push_back(c);
-    for (int c : {0x490, 0x491, 0xB0, 0xB2, 0xB7, 0xD7, 0x2013, 0x2014, 0x2019, 0x2026, 0x02BC, 0x2190, 0x2192})
+    for (int c : {0x490, 0x491, 0xAB, 0xB0, 0xB2, 0xB7, 0xBB, 0xD7, 0x2013, 0x2014, 0x2019, 0x2026, 0x02BC, 0x2190, 0x2192})
         cps.push_back(c);
     Font f = LoadFontFromMemory(".ttf", kFontData, (int)kFontDataSize, size, cps.data(), (int)cps.size());
     SetTextureFilter(f.texture, TEXTURE_FILTER_BILINEAR);

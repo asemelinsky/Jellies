@@ -132,6 +132,7 @@ void World::Substep(float dt) {
     ShapeMatch(dt);
     CollideParticles();
     CollidePlatform();
+    for (Collider* c : colliders) c->Collide(*this, dt);
 
     const float inv = 1.0f / dt;
     const float maxV = params.maxSpeed;

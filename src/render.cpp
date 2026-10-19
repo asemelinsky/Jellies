@@ -257,6 +257,41 @@ void main() {
 }
 )";
 
+// Props: obstacles, basket. Plain colour with an optional procedural pattern.
+const char* kPropFS = R"(
+in vec3 fragPos;
+in vec3 fragNormal;
+out vec4 finalColor;
+uniform vec3 propColor;
+uniform float propPattern;
+uniform float propGloss;
+uniform float causticStrength;
+uniform float time;
+
+void main() {
+    vec3 N = normalize(fragNormal);
+    if (!gl_FrontFacing) N = -N;
+    vec3 base = propColor;
+    if (propPattern > 0.5 && propPattern < 1.5) {
+        float a = atan(fragPos.z, fragPos.x);
+        float w = sin(fragPos.y * 42.0 + sign(sin(a * 18.0)) * 1.57) * sin(a * 18.0);
+        base *= 0.82 + 0.18 * w;
+    } else if (propPattern > 1.5) {
+        float st = step(0.5, fract((fragPos.x + fragPos.z) * 1.5));
+        base = mix(base, base * 0.72 + vec3(0.2), st * 0.6);
+    }
+    float ov;
+    vec3 sh = ShadowLight(fragPos, N, ov);
+    float ndl = max(dot(N, lightDir), 0.0);
+    vec3 V = normalize(camPos - fragPos);
+    vec3 H = normalize(lightDir + V);
+    float spec = pow(max(dot(N, H), 0.0), mix(16.0, 110.0, propGloss)) * mix(0.04, 0.6, propGloss);
+    vec3 col = base * (Ambient(N) * 0.85 + (lightColor * ndl * sh + Caustics(sh, ndl, causticStrength, time)) * 0.9) +
+               lightColor * sh * spec;
+    finalColor = vec4(Tone(col), 1.0);
+}
+)";
+
 const char* kSeaFS = R"(
 in vec3 fragPos;
 in vec3 fragNormal;
@@ -537,7 +572,7 @@ struct Renderer::Impl {
     Mesh platform = {}, sky = {}, sea = {};
     float platHalf = -1, platTop = 0, platBottom = 0;
 
-    ShaderBox depth, tint, skyS, platformS, seaS, jelly;
+    ShaderBox depth, tint, skyS, platformS, seaS, jelly, propS;
 
     void CreateSceneTargets(int w, int h) {
         DestroySceneTargets();
@@ -624,8 +659,9 @@ bool Renderer::Init(int width, int height) {
     ok &= R.platformS.Load(kLitVS, WithCommon(kPlatformFS));
     ok &= R.seaS.Load(kLitVS, WithCommon(kSeaFS));
     ok &= R.jelly.Load(kLitVS, WithCommon(kJellyFS));
+    ok &= R.propS.Load(kLitVS, WithCommon(kPropFS));
     if (!ok) return false;
-    for (ShaderBox* s : {&R.skyS, &R.platformS, &R.seaS, &R.jelly}) {
+    for (ShaderBox* s : {&R.skyS, &R.platformS, &R.seaS, &R.jelly, &R.propS}) {
         s->BindSlot(1, "shadowOpaque");
         s->BindSlot(2, "shadowJellyDepth");
         s->BindSlot(3, "shadowJellyColor");
@@ -647,7 +683,7 @@ void Renderer::Shutdown() {
     if (R.platform.vaoId) UnloadMesh(R.platform);
     UnloadMesh(R.sky);
     UnloadMesh(R.sea);
-    for (ShaderBox* s : {&R.depth, &R.tint, &R.skyS, &R.platformS, &R.seaS, &R.jelly}) s->Unload();
+    for (ShaderBox* s : {&R.depth, &R.tint, &R.skyS, &R.platformS, &R.seaS, &R.jelly, &R.propS}) s->Unload();
     delete impl_;
     impl_ = nullptr;
 }
@@ -732,6 +768,12 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
     beginLight(R.rtShOpaque);
     rlSetCullFace(RL_CULL_FACE_FRONT);
     DrawMesh(R.platform, R.depth.mat, platformXf);
+    for (const SceneObject& o : sceneObjects) {
+        if (!o.mesh || !o.castShadow) continue;
+        if (o.doubleSided) rlDisableBackfaceCulling();
+        DrawMesh(*o.mesh, R.depth.mat, o.transform);
+        if (o.doubleSided) rlEnableBackfaceCulling();
+    }
     rlSetCullFace(RL_CULL_FACE_BACK);
     EndMode3D();
     EndTextureMode();
@@ -786,6 +828,20 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
     R.platformS.F("causticStrength", R.caustics);
     R.platformS.F("time", time);
     DrawMesh(R.platform, R.platformS.mat, platformXf);
+    if (!sceneObjects.empty()) {
+        R.SetCommon(R.propS, sky, cam.position, lightVP);
+        R.propS.F("causticStrength", R.caustics);
+        R.propS.F("time", time);
+        for (const SceneObject& o : sceneObjects) {
+            if (!o.mesh) continue;
+            R.propS.V3("propColor", o.color);
+            R.propS.F("propPattern", (float)o.pattern);
+            R.propS.F("propGloss", o.gloss);
+            if (o.doubleSided) rlDisableBackfaceCulling();
+            DrawMesh(*o.mesh, R.propS.mat, o.transform);
+            if (o.doubleSided) rlEnableBackfaceCulling();
+        }
+    }
     splash::DrawStains(cam, sky.lightDir, sky.lightColor, sky.ambientSky);
     EndMode3D();
     EndTextureMode();

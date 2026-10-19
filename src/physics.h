@@ -38,6 +38,16 @@ struct PhysicsParams {
     float stickiness = 0.5f;    // 0 = none, 1 = very sticky (fresh contacts only)
 };
 
+class World;
+
+// Static geometry the particles collide with (obstacles, basket). Called every
+// substep after the platform; implementations project particles out of their
+// shapes and may call World::MarkGrounded() for contacts that act as ground.
+struct Collider {
+    virtual ~Collider() = default;
+    virtual void Collide(World& world, float dt) = 0;
+};
+
 class World {
 public:
     explicit World(const std::vector<ShapeTemplate>* templates) : tpl_(templates) {}
@@ -59,6 +69,8 @@ public:
     const ShapeTemplate& Template(const Body& b) const { return (*tpl_)[b.shape]; }
 
     PhysicsParams params;
+    std::vector<Collider*> colliders;  // not owned
+    void MarkGrounded(int particle) { grounded_[particle] = 1; }
     std::vector<Body> bodies;
     // Particle state (structure of arrays)
     std::vector<Vector3> x, xprev, v;

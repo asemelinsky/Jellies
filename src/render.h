@@ -18,6 +18,18 @@ struct SkyState {
     float night;            // 0 = day, 1 = full night
 };
 
+// Static scene geometry (obstacles, basket, ...) drawn with shadows like the
+// platform. Meshes are owned by whoever appends them; vertices in mesh space.
+struct SceneObject {
+    const Mesh* mesh = nullptr;
+    Matrix transform = MatrixIdentity();
+    Vector3 color = {0.8f, 0.8f, 0.8f};
+    int pattern = 0;     // 0 = plain, 1 = wicker weave, 2 = diagonal stripes
+    float gloss = 0.3f;  // 0 = matte, 1 = shiny
+    bool castShadow = true;
+    bool doubleSided = false;
+};
+
 // dayPhase in [0,1): 0 = sunrise, ~0.375 = noon, 0.75 = sunset, then night
 SkyState ComputeSky(float dayPhase);
 
@@ -39,6 +51,9 @@ public:
     // BeginDrawing/EndDrawing, before the UI). hovered/grabbed are body
     // indices or -1.
     void Render(const Camera3D& cam, const World& world, const SkyState& sky, int hovered, int grabbed, float time);
+
+    // Filled by the game every frame before Render()
+    std::vector<SceneObject> sceneObjects;
 
 private:
     struct Impl;
