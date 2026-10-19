@@ -4,6 +4,8 @@
 #include <cmath>
 #include <unordered_map>
 
+#include "glsl.h"
+
 namespace eyes {
 namespace {
 
@@ -267,7 +269,7 @@ void Init(const std::vector<ShapeTemplate>& templates) {
         if ((int)s == SHAPE_BEAR) BuildBearFace(templates[s], gFaces[s]);
         if ((int)s == SHAPE_WORM) BuildWormFace(templates[s], gFaces[s]);
     }
-    gShader = LoadShaderFromMemory(kVS, kFS);
+    gShader = LoadShaderFromMemory(PortGLSL(kVS).c_str(), PortGLSL(kFS).c_str());
     gLocLightDir = GetShaderLocation(gShader, "lightDir");
     gLocLightColor = GetShaderLocation(gShader, "lightColor");
     gLocAmbient = GetShaderLocation(gShader, "ambient");

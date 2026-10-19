@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Желейки — 3D-желе в браузері</title>
+<meta name="description" content="М'які напівпрозорі желейки з реалістичною фізикою: хапайте, кидайте, дивіться, як сонце світить крізь желе.">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #0e1320;
+    color: #f2f3f7;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  #canvas {
+    display: block;
+    position: fixed;
+    left: 0;
+    top: 0;
+    outline: none;
+    cursor: default;
+  }
+  #loader {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 0 16px;
+    text-align: center;
+    background: radial-gradient(ellipse at 50% 35%, #27406b 0%, #121a2c 55%, #0b101b 100%);
+    transition: opacity .45s ease;
+  }
+  #loader .title {
+    font-size: clamp(40px, 8vw, 72px);
+    font-weight: 800;
+    letter-spacing: .5px;
+    background: linear-gradient(90deg, #ff4d5a, #ffb02e, #ffe14d, #4cd964, #42c8ff, #3a5bff, #a347ff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 4px 18px rgba(255, 140, 80, .25));
+  }
+  #loader .sub { font-size: 15px; opacity: .7; max-width: 520px; line-height: 1.45; }
+  .bar {
+    width: min(320px, 80vw);
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, .12);
+    overflow: hidden;
+  }
+  .bar > div {
+    height: 100%;
+    width: 35%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #ff4d5a, #ffb02e, #ffe14d, #4cd964, #42c8ff, #3a5bff, #a347ff);
+    animation: slide 1.1s ease-in-out infinite alternate;
+  }
+  .bar > div.done { width: 100%; animation: none; transition: width .2s; }
+  @keyframes slide { from { transform: translateX(-20%); } to { transform: translateX(210%); } }
+  #status { font-size: 14px; opacity: .8; min-height: 1.4em; max-width: 560px; line-height: 1.45; }
+  #status.error { color: #ff9b9b; opacity: 1; }
+  #dl {
+    position: fixed;
+    right: 12px;
+    top: 38px;
+    z-index: 3;
+    font-size: 13px;
+    color: #f2f3f7;
+    opacity: .72;
+    text-decoration: none;
+    background: rgba(18, 22, 34, .62);
+    border: 1px solid rgba(255, 255, 255, .14);
+    padding: 6px 10px;
+    border-radius: 8px;
+  }
+  #dl:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+
+<div id="loader">
+  <div class="title">Желейки</div>
+  <div class="sub">М'які напівпрозорі желейки з фізикою. Хапайте лівою кнопкою миші, кидайте, обертайте камеру правою.</div>
+  <div class="bar"><div id="progress"></div></div>
+  <div id="status">Завантаження…</div>
+</div>
+
+<a id="dl" href="https://github.com/asemelinsky/Jellies/releases/latest" target="_blank" rel="noopener">⬇ Завантажити для Windows / Linux</a>
+
+<script>
+  var statusEl = document.getElementById('status');
+  var progressEl = document.getElementById('progress');
+  var loaderEl = document.getElementById('loader');
+
+  function showError(text) {
+    statusEl.textContent = text;
+    statusEl.className = 'error';
+    progressEl.style.display = 'none';
+    loaderEl.style.display = 'flex';
+    loaderEl.style.opacity = 1;
+  }
+
+  // WebGL 2 is required (OpenGL ES 3.0 shaders, depth textures)
+  (function () {
+    var test = document.createElement('canvas');
+    if (!test.getContext('webgl2')) {
+      showError('Ваш браузер або відеодрайвер не підтримує WebGL 2. Оновіть Chrome, Edge, Firefox чи Safari (15+), ' +
+                'увімкніть апаратне прискорення в налаштуваннях браузера або скачайте версію для комп’ютера (посилання внизу праворуч).');
+      window.noWebGL2 = true;
+    }
+  })();
+
+  var Module = {
+    canvas: (function () {
+      var c = document.getElementById('canvas');
+      c.addEventListener('webglcontextlost', function (e) {
+        showError('Відеокарта скинула контекст WebGL. Перезавантажте сторінку.');
+        e.preventDefault();
+      }, false);
+      return c;
+    })(),
+    print: function (text) { console.log(text); },
+    printErr: function (text) { console.warn(text); },
+    setStatus: function (text) {
+      if (window.noWebGL2 || !text) return;
+      if (/^Downloading|^Preparing|^Running/.test(text)) return;  // keep the friendly text
+      statusEl.textContent = text;
+    },
+    totalDependencies: 0,
+    monitorRunDependencies: function (left) {
+      this.totalDependencies = Math.max(this.totalDependencies, left);
+    },
+    onRuntimeInitialized: function () {
+      if (window.noWebGL2) return;
+      progressEl.className = 'done';
+      statusEl.textContent = 'Готово!';
+      setTimeout(function () {
+        loaderEl.style.opacity = 0;
+        setTimeout(function () { loaderEl.style.display = 'none'; }, 480);
+      }, 200);
+      Module.canvas.focus();
+    },
+    onAbort: function (what) { showError('Не вдалося запустити: ' + what); }
+  };
+
+  window.onerror = function (message) { showError('Помилка: ' + message); };
+
+  // The page itself never scrolls: Space, arrows and the wheel belong to the game
+  window.addEventListener('keydown', function (e) {
+    if ([' ', 'Spacebar', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].indexOf(e.key) >= 0) e.preventDefault();
+    // Browsers keep audio muted until a user gesture; a key press counts too
+    if (window.miniaudio && typeof window.miniaudio.unlock === 'function') window.miniaudio.unlock();
+  }, true);
+  window.addEventListener('wheel', function (e) { e.preventDefault(); }, { passive: false });
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

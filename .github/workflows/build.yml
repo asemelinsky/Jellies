@@ -95,6 +95,52 @@ jobs:
           path: Jellies-Linux-x64.tar.gz
           if-no-files-found: error
 
+  web:
+    name: Web (WebAssembly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure
+        run: emcmake cmake -B build-web -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-web --parallel
+
+      - name: Package site
+        run: |
+          mkdir -p site
+          cp build-web/jellies.js build-web/jellies.wasm site/
+          cp build-web/jellies.html site/index.html
+          touch site/.nojekyll
+          ls -la site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  # Publishes the browser version at https://<owner>.github.io/<repo>/
+  # (needs Settings → Pages → Source: GitHub Actions, set once in the repo)
+  pages:
+    name: Deploy to GitHub Pages
+    needs: web
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
   release:
     name: Publish release
     needs: [windows, linux]

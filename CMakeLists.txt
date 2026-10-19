@@ -18,7 +18,13 @@ include(FetchContent)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
-set(OPENGL_VERSION "3.3" CACHE STRING "" FORCE)
+if(EMSCRIPTEN)
+    # Browser build: WebGL 2 (OpenGL ES 3.0) through emscripten's GLFW
+    set(PLATFORM "Web" CACHE STRING "" FORCE)
+    set(OPENGL_VERSION "ES 3.0" CACHE STRING "" FORCE)
+else()
+    set(OPENGL_VERSION "3.3" CACHE STRING "" FORCE)
+endif()
 FetchContent_Declare(raylib
     GIT_REPOSITORY https://github.com/raysan5/raylib.git
     GIT_TAG 5.5
@@ -44,7 +50,21 @@ if(WIN32)
     set_source_files_properties(assets/jellies.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico)
 endif()
 
-if(MSVC)
+if(EMSCRIPTEN)
+    # jellies.html + jellies.js + jellies.wasm, using our own page template
+    set_target_properties(jelly PROPERTIES OUTPUT_NAME "jellies" SUFFIX ".html")
+    target_compile_options(jelly PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-O3>")
+    target_link_options(jelly PRIVATE
+        -O3
+        -sUSE_GLFW=3
+        -sMIN_WEBGL_VERSION=2
+        -sMAX_WEBGL_VERSION=2
+        -sALLOW_MEMORY_GROWTH=1
+        -sINITIAL_MEMORY=134217728
+        -sSTACK_SIZE=1048576
+        --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html)
+    set_property(TARGET jelly APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html)
+elseif(MSVC)
     # C++-only flags: keep them away from the resource compiler
     target_compile_options(jelly PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/W3;/O2;/fp:fast;/utf-8>")
     # WIN32 subsystem (no console window) while keeping a regular main()

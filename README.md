@@ -9,6 +9,8 @@
 | **Windows 10/11 (64-bit)** | [⬇ Jellies-Windows-x64.exe](https://github.com/asemelinsky/Jellies/releases/latest/download/Jellies-Windows-x64.exe) |
 | **Linux (x86-64)** | [⬇ Jellies-Linux-x64.tar.gz](https://github.com/asemelinsky/Jellies/releases/latest/download/Jellies-Linux-x64.tar.gz) |
 
+**Грати в браузері** без встановлення: **https://asemelinsky.github.io/Jellies/**. Потрібен браузер із WebGL 2. Для найкращої швидкодії (особливо з 50 желейками) радимо версію для комп'ютера.
+
 **Windows:** скачайте файл і запустіть. Інсталяція не потрібна, програма працює офлайн. Файл не підписаний, тому Windows може показати «Windows захистив ваш ПК»: натисніть «Докладніше», потім «Виконати в будь-якому разі».
 
 **Linux:**
@@ -89,7 +91,15 @@ cmake --build build-win -j
 
 Щоб зібрати без інтернету, вкажіть локальну копію raylib: `-DFETCHCONTENT_SOURCE_DIR_RAYLIB=/шлях/до/raylib-5.5`.
 
-Після кожного push у `main` GitHub Actions збирає версії для Windows (MSVC) і Linux та оновлює реліз `latest`.
+**Веб-версія (WebAssembly, потрібен [Emscripten](https://emscripten.org) 3.1.74):**
+
+```sh
+emcmake cmake -B build-web -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web -j
+cd build-web && python3 -m http.server 8000   # відкрийте http://localhost:8000/jellies.html
+```
+
+Після кожного push у `main` GitHub Actions збирає версії для Windows (MSVC) і Linux, оновлює реліз `latest` і публікує веб-версію на GitHub Pages.
 
 ## Як це працює
 

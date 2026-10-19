@@ -4,6 +4,7 @@
 #include <cmath>
 #include <unordered_map>
 #include <vector>
+#include "glsl.h"
 #include "rlgl.h"
 
 namespace splash {
@@ -188,14 +189,14 @@ void Burst(Vector3 origin, Vector3 color, float speed, float scale, int count, f
 }  // namespace
 
 void Init() {
-    gStainShader = LoadShaderFromMemory(kStainVS, kStainFS);
+    gStainShader = LoadShaderFromMemory(PortGLSL(kStainVS).c_str(), PortGLSL(kStainFS).c_str());
     gStainLoc[0] = GetShaderLocation(gStainShader, "camPos");
     gStainLoc[1] = GetShaderLocation(gStainShader, "lightDir");
     gStainLoc[2] = GetShaderLocation(gStainShader, "lightColor");
     gStainLoc[3] = GetShaderLocation(gStainShader, "ambient");
     gStainLoc[4] = GetShaderLocation(gStainShader, "platformHalf");
     gStainLoc[5] = GetShaderLocation(gStainShader, "pass");
-    gDropShader = LoadShaderFromMemory(kDropVS, kDropFS);
+    gDropShader = LoadShaderFromMemory(PortGLSL(kDropVS).c_str(), PortGLSL(kDropFS).c_str());
     gDropLoc[0] = GetShaderLocation(gDropShader, "camPos");
     gDropLoc[1] = GetShaderLocation(gDropShader, "lightDir");
     gDropLoc[2] = GetShaderLocation(gDropShader, "lightColor");

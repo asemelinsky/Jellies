@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+#if defined(PLATFORM_WEB)
+#include <emscripten/emscripten.h>
+#endif
+
 #include "audio.h"
 #include "eyes.h"
 #include "physics.h"
@@ -82,6 +86,9 @@ struct App {
     void Simulate(float dt);
     void DrawUI();
     void UpdateBench(float frameDt);
+    bool Frame();  // one iteration of the main loop; false = quit
+
+    int lastW = 0, lastH = 0;
 };
 
 void App::Spawn(int forcedMode) {
@@ -135,6 +142,8 @@ void App::HandleInput() {
     if (IsKeyPressed(KEY_R)) Reset();
     if (IsKeyPressed(KEY_H)) showPanel = !showPanel;
     if (IsKeyPressed(KEY_M)) audio::SetMuted(!audio::IsMuted());
+#if !defined(PLATFORM_WEB)
+    // In the browser F11/Esc are handled by the browser itself and vsync is always on
     if (IsKeyPressed(KEY_F11) || (IsKeyPressed(KEY_ENTER) && (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))))
         ToggleBorderlessWindowed();
     if (IsKeyPressed(KEY_ESCAPE) && IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE)) ToggleBorderlessWindowed();
@@ -148,6 +157,7 @@ void App::HandleInput() {
             SetTargetFPS(0);
         }
     }
+#endif
 
     const bool uiMouse = ui::WantsMouse();
 
@@ -307,12 +317,14 @@ void App::DrawUI() {
     ui::Label(buf, Vector2{x + 10, y}, 17, dim);
 
     const char* help1 = "ЛКМ — схопити й кинути  ·  ПКМ — камера  ·  Коліщатко — зум  ·  Пробіл — желейка (Shift — 10)";
+#if defined(PLATFORM_WEB)
+    const char* help2 = "P — пауза  ·  R — скинути  ·  H — панель  ·  M — звук  ·  F11 — повний екран";
+#else
     const char* help2 = "P — пауза  ·  R — скинути  ·  H — панель  ·  M — звук  ·  V — верт. синхр.  ·  F11 — повний екран";
+#endif
     ui::Label(help1, Vector2{14, GetScreenHeight() - 50.0f}, 16, dim);
     ui::Label(help2, Vector2{14, GetScreenHeight() - 28.0f}, 16, dim);
 }
-
-}  // namespace
 
 void App::UpdateBench(float frameDt) {
     // 0..5 s: rain 50 jellies in; 5..25 s: measure; then show the result
@@ -355,6 +367,47 @@ void App::UpdateBench(float frameDt) {
     }
 }
 
+bool App::Frame() {
+    const float frameDt = GetFrameTime();
+    if (GetScreenWidth() != lastW || GetScreenHeight() != lastH) {
+        lastW = GetScreenWidth();
+        lastH = GetScreenHeight();
+        if (lastW > 0 && lastH > 0) renderer.Resize(lastW, lastH);
+    }
+
+    ui::BeginFrame();
+    HandleInput();
+    if (bench) {
+        UpdateBench(frameDt);
+        if (!benchResult.empty() && IsKeyPressed(KEY_ESCAPE)) return false;
+    }
+    Simulate(frameDt);
+    eyes::Update(world, frameDt);
+    audio::Update(frameDt);
+    renderer.UpdateBodyMeshes(world);
+    SkyState sky = ComputeSky(dayPhase);
+
+    BeginDrawing();
+    renderer.Render(orbit.cam, world, sky, hovered, world.GrabbedBody(), simTime);
+    DrawUI();
+    if (bench) {
+        const char* text = benchResult.empty() ? "Тест продуктивності… (25 с)" : benchResult.c_str();
+        Vector2 m = ui::Measure(text, 22);
+        Rectangle r = {GetScreenWidth() * 0.5f - m.x * 0.5f - 20, GetScreenHeight() * 0.5f - m.y * 0.5f - 16,
+                       m.x + 40, m.y + 32};
+        ui::Panel(r);
+        ui::Label(text, Vector2{r.x + 20, r.y + 16}, 22, Color{245, 245, 250, 255});
+    }
+    EndDrawing();
+    return true;
+}
+
+#if defined(PLATFORM_WEB)
+void WebFrame(void* app) { static_cast<App*>(app)->Frame(); }
+#endif
+
+}  // namespace
+
 int main(int argc, char** argv) {
     bool fullscreen = false, bench = false;
     for (int i = 1; i < argc; i++) {
@@ -363,9 +416,14 @@ int main(int argc, char** argv) {
     }
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+#if defined(PLATFORM_WEB)
+    // The canvas fills the browser tab and follows its size
+    InitWindow(EM_ASM_INT(return window.innerWidth;), EM_ASM_INT(return window.innerHeight;), "Желейки");
+#else
     InitWindow(1280, 720, "Желейки");
-    SetExitKey(KEY_NULL);
     SetWindowMinSize(640, 400);
+#endif
+    SetExitKey(KEY_NULL);
     if (fullscreen) ToggleBorderlessWindowed();
     if (bench) {
         // Measure headroom: no vsync, no frame cap
@@ -388,41 +446,16 @@ int main(int argc, char** argv) {
     SetRandomSeed((unsigned)(GetTime() * 1e6) ^ 0x5eed);
     app.orbit.Update();
     app.Reset();
+    app.lastW = GetScreenWidth();
+    app.lastH = GetScreenHeight();
 
-    int lastW = GetScreenWidth(), lastH = GetScreenHeight();
-    while (!WindowShouldClose()) {
-        const float frameDt = GetFrameTime();
-        if (GetScreenWidth() != lastW || GetScreenHeight() != lastH) {
-            lastW = GetScreenWidth();
-            lastH = GetScreenHeight();
-            if (lastW > 0 && lastH > 0) app.renderer.Resize(lastW, lastH);
-        }
-
-        ui::BeginFrame();
-        app.HandleInput();
-        if (app.bench) {
-            app.UpdateBench(frameDt);
-            if (!app.benchResult.empty() && IsKeyPressed(KEY_ESCAPE)) break;
-        }
-        app.Simulate(frameDt);
-        eyes::Update(app.world, frameDt);
-        audio::Update(frameDt);
-        app.renderer.UpdateBodyMeshes(app.world);
-        SkyState sky = ComputeSky(app.dayPhase);
-
-        BeginDrawing();
-        app.renderer.Render(app.orbit.cam, app.world, sky, app.hovered, app.world.GrabbedBody(), app.simTime);
-        app.DrawUI();
-        if (app.bench) {
-            const char* text = app.benchResult.empty() ? "Тест продуктивності… (25 с)" : app.benchResult.c_str();
-            Vector2 m = ui::Measure(text, 22);
-            Rectangle r = {GetScreenWidth() * 0.5f - m.x * 0.5f - 20, GetScreenHeight() * 0.5f - m.y * 0.5f - 16,
-                           m.x + 40, m.y + 32};
-            ui::Panel(r);
-            ui::Label(text, Vector2{r.x + 20, r.y + 16}, 22, Color{245, 245, 250, 255});
-        }
-        EndDrawing();
+#if defined(PLATFORM_WEB)
+    // The browser drives the frames; this call does not return
+    emscripten_set_main_loop_arg(WebFrame, &app, 0, 1);
+#else
+    while (!WindowShouldClose() && app.Frame()) {
     }
+#endif
 
     for (Body& b : app.world.bodies) app.renderer.DestroyBodyMesh(b);
     splash::Shutdown();

@@ -9,7 +9,11 @@
 #include <vector>
 
 #include "rlgl.h"
+#if defined(PLATFORM_WEB)
+#include <GLES3/gl3.h>
+#endif
 #include "eyes.h"
+#include "glsl.h"
 #include "splash.h"
 
 namespace {
@@ -353,7 +357,8 @@ struct ShaderBox {
     std::unordered_map<std::string, int> locs;
 
     bool Load(const char* vs, const std::string& fs) {
-        sh = LoadShaderFromMemory(vs, fs.c_str());
+        const std::string v = PortGLSL(vs), f = PortGLSL(fs.c_str());
+        sh = LoadShaderFromMemory(v.c_str(), f.c_str());
         if (!IsShaderValid(sh)) return false;
         mat = LoadMaterialDefault();
         mat.shader = sh;
@@ -384,6 +389,25 @@ struct ShaderBox {
 };
 
 std::string WithCommon(const char* body) { return std::string("#version 330\n") + kCommonGLSL + body; }
+
+// WebGL 2 only accepts sized depth formats, while raylib requests an unsized
+// one there, so the browser build creates its depth textures itself
+unsigned LoadDepthTexture(int w, int h) {
+#if defined(PLATFORM_WEB)
+    GLuint id = 0;
+    glGenTextures(1, &id);
+    glBindTexture(GL_TEXTURE_2D, id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return id;
+#else
+    return rlLoadTextureDepth(w, h, false);
+#endif
+}
 
 unsigned LoadColorTexture(int w, int h, bool linear) {
     unsigned id = rlLoadTexture(nullptr, w, h, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
@@ -519,7 +543,7 @@ struct Renderer::Impl {
         DestroySceneTargets();
         width = w;
         height = h;
-        sceneDepth = rlLoadTextureDepth(w, h, false);
+        sceneDepth = LoadDepthTexture(w, h);
         colorA = LoadColorTexture(w, h, true);
         colorB = LoadColorTexture(w, h, true);
         rtA = MakeTarget(colorA, sceneDepth, w, h);
@@ -544,9 +568,9 @@ struct Renderer::Impl {
             default: shadowSize = 4096; taps = 16; softness = 0.05f; caustics = 1.0f; break;
         }
         const int s = shadowSize;
-        shOpaqueDepth = rlLoadTextureDepth(s, s, false);
+        shOpaqueDepth = LoadDepthTexture(s, s);
         shOpaqueColor = LoadColorTexture(s, s, false);
-        shJellyDepth = rlLoadTextureDepth(s, s, false);
+        shJellyDepth = LoadDepthTexture(s, s);
         shJellyColor = LoadColorTexture(s, s, true);
         rtShOpaque = MakeTarget(shOpaqueColor, shOpaqueDepth, s, s);
         rtShJelly = MakeTarget(shJellyColor, shJellyDepth, s, s);
