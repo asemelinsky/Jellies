@@ -128,7 +128,8 @@ void World::Substep(float dt) {
         x[i] += v[i] * dt;
     }
 
-    ApplyGrab();
+    MoveHand(dt);
+    ApplyGrab(dt);
     ShapeMatch(dt);
     CollideParticles();
     CollidePlatform();
@@ -146,19 +147,76 @@ void World::Substep(float dt) {
             b.impactGround = std::max(b.impactGround, -vnIn_[i]);
         }
     }
+    DampGrab(dt);
     DampBodies(dt);
 }
 
-void World::ApplyGrab() {
+void World::MoveHand(float dt) {
+    if (grabBody_ < 0) return;
+    // Critically damped chase of the cursor target with acceleration and
+    // speed limits: jerks are smoothed and long moves don't overshoot
+    const float w = params.grabResponse;
+    Vector3 acc = (grabTarget_ - handPos_) * (w * w) - handVel_ * (2.0f * w);
+    float a = Len(acc);
+    if (a > params.grabMaxAccel) acc = acc * (params.grabMaxAccel / a);
+    handVel_ += acc * dt;
+    float sp = Len(handVel_);
+    if (sp > params.grabMaxSpeed) handVel_ = handVel_ * (params.grabMaxSpeed / sp);
+    handPos_ += handVel_ * dt;
+}
+
+void World::ApplyGrab(float dt) {
+    if (grabBody_ < 0) return;
+    // XPBD attachment of each patch particle to its spot on the hand. The
+    // compliance is scaled by particle mass and patch weight, so the hold has
+    // the same feel for every jelly size and does not depend on substeps.
+    const Body& b = bodies[grabBody_];
+    const float alphaTilde = params.grabCompliance / (dt * dt);
+    for (const GrabParticle& g : grabParticles_) {
+        const int gi = b.first + g.idx;
+        const Vector3 target = handPos_ + b.rot * g.local;
+        const float f = 1.0f / (1.0f + alphaTilde / g.w);
+        x[gi] += (target - x[gi]) * f;
+    }
+}
+
+void World::DampGrab(float dt) {
     if (grabBody_ < 0) return;
     const Body& b = bodies[grabBody_];
-    const ShapeTemplate& st = (*tpl_)[b.shape];
-    const Vector3 anchorTarget = grabTarget_ + grabOffset_;
-    const Vector3 anchorRest = st.rest[grabAnchor_];
-    for (auto& [idx, w] : grabParticles_) {
-        Vector3 t = anchorTarget + b.rot * ((st.rest[idx] - anchorRest) * b.scale);
-        int gi = b.first + idx;
-        x[gi] += (t - x[gi]) * (0.35f * w);
+    const int f = b.first, n = b.count;
+
+    // The body swings on the soft attachment; damp its centre velocity towards
+    // the hand and its spin, but not the internal wobble (rigid modes only)
+    Vector3 xc = {0, 0, 0}, vc = {0, 0, 0};
+    for (int i = f; i < f + n; i++) {
+        xc += x[i];
+        vc += v[i];
+    }
+    xc = xc * (1.0f / n);
+    vc = vc * (1.0f / n);
+    Vector3 L = {0, 0, 0};
+    M3 I = M3::Zero();
+    for (int i = f; i < f + n; i++) {
+        Vector3 r = x[i] - xc;
+        L += Cross(r, v[i] - vc);
+        float r2 = Len2(r);
+        I.c[0] += Vector3{r2, 0, 0};
+        I.c[1] += Vector3{0, r2, 0};
+        I.c[2] += Vector3{0, 0, r2};
+        I.AddOuter(r * -1.0f, r);
+    }
+    bool ok = false;
+    M3 Iinv = Inverse(I, &ok);
+    const Vector3 omega = ok ? Iinv * L : Vector3{0, 0, 0};
+    const Vector3 dvLin = (handVel_ - vc) * (1.0f - std::exp(-params.grabBodyDamping * dt));
+    const float kSpin = 1.0f - std::exp(-params.grabSpinDamping * dt);
+    for (int i = f; i < f + n; i++) v[i] += dvLin - Cross(omega, x[i] - xc) * kSpin;
+
+    // The held patch itself follows the hand's velocity closely
+    for (const GrabParticle& g : grabParticles_) {
+        const int gi = f + g.idx;
+        const float k = 1.0f - std::exp(-params.grabDamping * g.w * dt);
+        v[gi] += (handVel_ - v[gi]) * k;
     }
 }
 
@@ -484,10 +542,29 @@ void World::DampBodies(float dt) {
     }
 }
 
+namespace {
+
+// Möller–Trumbore, two-sided; returns the ray parameter or a negative value
+float RayTriangle(Vector3 o, Vector3 d, Vector3 a, Vector3 b, Vector3 c) {
+    const Vector3 e1 = b - a, e2 = c - a;
+    const Vector3 p = Cross(d, e2);
+    const float det = Dot(e1, p);
+    if (std::fabs(det) < 1e-12f) return -1.0f;
+    const float inv = 1.0f / det;
+    const Vector3 s = o - a;
+    const float u = Dot(s, p) * inv;
+    if (u < 0.0f || u > 1.0f) return -1.0f;
+    const Vector3 q = Cross(s, e1);
+    const float v = Dot(d, q) * inv;
+    if (v < 0.0f || u + v > 1.0f) return -1.0f;
+    return Dot(e2, q) * inv;
+}
+
+}  // namespace
+
 int World::Raycast(Ray ray, float* hitDist, int* hitParticle) const {
     int best = -1;
     float bestT = 1e30f;
-    int bestP = -1;
     const Vector3 o = ray.position, d = Norm(ray.direction);
     for (int bi = 0; bi < (int)bodies.size(); bi++) {
         const Body& b = bodies[bi];
@@ -497,25 +574,54 @@ int World::Raycast(Ray ray, float* hitDist, int* hitParticle) const {
         float cq = Len2(oc) - br * br;
         if (cq > 0 && bq > 0) continue;
         if (bq * bq - cq < 0) continue;
-        const float r = b.particleRadius * 1.7f;
-        for (int i = b.first; i < b.first + b.count; i++) {
-            Vector3 op = o - x[i];
-            float pb = Dot(op, d);
-            float pc = Len2(op) - r * r;
-            float disc = pb * pb - pc;
-            if (disc < 0) continue;
-            float t = -pb - std::sqrt(disc);
-            if (t < 0) continue;
-            if (t < bestT) {
-                bestT = t;
-                best = bi;
-                bestP = i - b.first;
+        // Enter distance of the bounding sphere: skip bodies behind the best hit
+        if (-bq - std::sqrt(bq * bq - cq) > bestT) continue;
+
+        const Mesh& m = b.mesh;
+        if (b.meshReady && m.vertices && m.indices && m.triangleCount > 0) {
+            // Exactly the visible surface
+            const Vector3* vp = reinterpret_cast<const Vector3*>(m.vertices);
+            for (int t = 0; t < m.triangleCount; t++) {
+                const unsigned short* tri = m.indices + 3 * t;
+                float th = RayTriangle(o, d, vp[tri[0]], vp[tri[1]], vp[tri[2]]);
+                if (th > 0.0f && th < bestT) {
+                    bestT = th;
+                    best = bi;
+                }
+            }
+        } else {
+            const float r = b.particleRadius * 1.7f;
+            for (int i = b.first; i < b.first + b.count; i++) {
+                Vector3 op = o - x[i];
+                float pb = Dot(op, d);
+                float pc = Len2(op) - r * r;
+                float disc = pb * pb - pc;
+                if (disc < 0) continue;
+                float t = -pb - std::sqrt(disc);
+                if (t > 0 && t < bestT) {
+                    bestT = t;
+                    best = bi;
+                }
             }
         }
     }
     if (best >= 0) {
         if (hitDist) *hitDist = bestT;
-        if (hitParticle) *hitParticle = bestP;
+        if (hitParticle) {
+            // Particle nearest to the hit point
+            const Body& b = bodies[best];
+            const Vector3 hp = o + d * bestT;
+            float bd = 1e30f;
+            int bp = 0;
+            for (int i = 0; i < b.count; i++) {
+                float dd = Len2(x[b.first + i] - hp);
+                if (dd < bd) {
+                    bd = dd;
+                    bp = i;
+                }
+            }
+            *hitParticle = bp;
+        }
     }
     return best;
 }
@@ -525,15 +631,41 @@ void World::BeginGrab(int body, int particle, Vector3 grabPoint) {
     if (body < 0 || body >= (int)bodies.size()) return;
     const Body& b = bodies[body];
     const ShapeTemplate& st = (*tpl_)[b.shape];
-    grabBody_ = body;
-    grabAnchor_ = particle;
-    grabTarget_ = grabPoint;
-    grabOffset_ = x[b.first + particle] - grabPoint;
-    const float reach = st.spacing * 2.3f;
+
+    // Gaussian patch around the grab point (world-space distances now). The
+    // grab point lies on the surface, so outer particles get the most weight.
+    const float sigma = 1.2f * st.spacing * b.scale;
+    const float inv2s2 = 1.0f / (2.0f * sigma * sigma);
+    std::vector<std::pair<float, int>> cand;
+    cand.reserve(b.count);
     for (int i = 0; i < b.count; i++) {
-        float d = Len(st.rest[i] - st.rest[particle]);
-        if (d <= reach) grabParticles_.push_back({i, 1.0f - 0.6f * (d / reach)});
+        float w = std::exp(-Len2(x[b.first + i] - grabPoint) * inv2s2);
+        if (w > 0.05f) cand.push_back({w, i});
     }
+    if (cand.empty()) cand.push_back({1.0f, particle});
+    std::sort(cand.begin(), cand.end(), [](auto& a, auto& c) { return a.first > c.first; });
+    if (cand.size() > 32) cand.resize(32);
+    const float wMax = cand.front().first;
+
+    // Offsets in the body frame, so the patch turns with the body
+    const M3& R = b.rot;
+    for (auto& [w, i] : cand) {
+        Vector3 r = x[b.first + i] - grabPoint;
+        Vector3 local = {Dot(R.c[0], r), Dot(R.c[1], r), Dot(R.c[2], r)};
+        grabParticles_.push_back({i, w / wMax, local});
+    }
+
+    // The hand starts at the grab point, moving with the held patch
+    Vector3 pv = {0, 0, 0};
+    float ws = 0;
+    for (const GrabParticle& g : grabParticles_) {
+        pv += v[b.first + g.idx] * g.w;
+        ws += g.w;
+    }
+    grabBody_ = body;
+    grabTarget_ = grabPoint;
+    handPos_ = grabPoint;
+    handVel_ = pv * (1.0f / ws);
 }
 
 void World::EndGrab(Vector3 throwVelocity, float maxThrowSpeed) {

@@ -36,6 +36,15 @@ struct PhysicsParams {
     float jellyFriction = 0.35f;
     float internalDamping = 1.6f;
     float stickiness = 0.5f;    // 0 = none, 1 = very sticky (fresh contacts only)
+    // Mouse grab: a "hand" chases the cursor target with limited acceleration
+    // and speed (in physics time); a Gaussian patch of particles hangs on it
+    float grabMaxAccel = 80.0f;     // m/s^2
+    float grabMaxSpeed = 12.0f;     // m/s
+    float grabResponse = 18.0f;     // rad/s of the critically damped chase
+    float grabCompliance = 3e-4f;   // XPBD compliance of the attachment (per unit weight)
+    float grabDamping = 30.0f;      // 1/s, patch velocity relative to the hand
+    float grabBodyDamping = 18.0f;  // 1/s, held body's centre velocity relative to the hand
+    float grabSpinDamping = 5.0f;   // 1/s, held body's spin (no wild whipping)
 };
 
 class World;
@@ -57,14 +66,19 @@ public:
     void Clear();
     void Step(float dt, int substeps);
 
-    // Nearest body hit by the ray; returns body index or -1
+    // Nearest body hit by the ray (render mesh triangles when available,
+    // otherwise particle spheres); returns body index or -1. hitParticle is the
+    // particle closest to the hit point.
     int Raycast(Ray ray, float* hitDist, int* hitParticle) const;
 
+    // grabPoint is the hit point on the jelly surface; the hand starts there
     void BeginGrab(int body, int particle, Vector3 grabPoint);
-    void SetGrabTarget(Vector3 grabPoint) { grabTarget_ = grabPoint; }
+    void SetGrabTarget(Vector3 target) { grabTarget_ = target; }
     void EndGrab(Vector3 throwVelocity, float maxThrowSpeed);
     void CancelGrab() { grabBody_ = -1; grabParticles_.clear(); }
     int GrabbedBody() const { return grabBody_; }
+    Vector3 HandPosition() const { return handPos_; }
+    Vector3 HandVelocity() const { return handVel_; }
 
     const ShapeTemplate& Template(const Body& b) const { return (*tpl_)[b.shape]; }
 
@@ -80,7 +94,9 @@ public:
 private:
     void Substep(float dt);
     void ShapeMatch(float dt);
-    void ApplyGrab();
+    void MoveHand(float dt);
+    void ApplyGrab(float dt);
+    void DampGrab(float dt);
     void CollideParticles();
     void CollidePlatform();
     void DampBodies(float dt);
@@ -89,12 +105,17 @@ private:
     const std::vector<ShapeTemplate>* tpl_;
     int nextId_ = 1;
 
-    // Grab constraint
+    // Grab: hand state and the attached patch. `local` is the particle's
+    // offset from the grab point in the body frame at grab time.
+    struct GrabParticle {
+        int idx;
+        float w;
+        Vector3 local;
+    };
     int grabBody_ = -1;
-    int grabAnchor_ = -1;
     Vector3 grabTarget_ = {0, 0, 0};
-    Vector3 grabOffset_ = {0, 0, 0};
-    std::vector<std::pair<int, float>> grabParticles_;
+    Vector3 handPos_ = {0, 0, 0}, handVel_ = {0, 0, 0};
+    std::vector<GrabParticle> grabParticles_;
 
     // Scratch buffers
     std::vector<Vector3> goalSum_;

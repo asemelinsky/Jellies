@@ -3,7 +3,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <deque>
 #include <string>
 #include <vector>
 
@@ -79,7 +78,6 @@ struct App {
     // Grabbing
     int hovered = -1;
     float grabPlaneDist = 0;
-    std::deque<std::pair<double, Vector3>> grabHistory;
 
     void Spawn(int forcedMode = -1);
     void Reset();
@@ -131,7 +129,6 @@ void App::Reset() {
     splash::Clear();
     basket::Reset();
     hovered = -1;
-    grabHistory.clear();
     spawnTimer = 0;
     Spawn();
 }
@@ -189,8 +186,6 @@ void App::HandleInput() {
             Vector3 p = ray.position + Norm(ray.direction) * t;
             grabPlaneDist = Dot(p - orbit.cam.position, orbit.Forward());
             world.BeginGrab(hit, particle, p);
-            grabHistory.clear();
-            grabHistory.push_back({GetTime(), p});
             audio::PlaySquelch(0.3f);
         }
     }
@@ -203,7 +198,7 @@ void App::UpdateGrab() {
     Vector3 planePoint = orbit.cam.position + fwd * grabPlaneDist;
     Vector3 dir = Norm(ray.direction);
     float denom = Dot(dir, fwd);
-    Vector3 target = grabHistory.empty() ? planePoint : grabHistory.back().second;
+    Vector3 target = planePoint;
     if (std::fabs(denom) > 1e-4f) target = ray.position + dir * (Dot(planePoint - ray.position, fwd) / denom);
 
     // Keep the target in a sane region and above the platform surface
@@ -213,18 +208,9 @@ void App::UpdateGrab() {
     target.z = std::clamp(target.z, -L - 10, L + 10);
     if (std::fabs(target.x) < L && std::fabs(target.z) < L) target.y = std::max(target.y, world.params.platformTop + 0.25f);
 
+    // The physics "hand" chases this target; releasing throws with its velocity
     world.SetGrabTarget(target);
-    double now = GetTime();
-    grabHistory.push_back({now, target});
-    while (grabHistory.size() > 2 && now - grabHistory.front().first > 0.09) grabHistory.pop_front();
-
-    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) || paused) {
-        Vector3 vel = {0, 0, 0};
-        double span = grabHistory.back().first - grabHistory.front().first;
-        if (span > 1e-3) vel = (grabHistory.back().second - grabHistory.front().second) * (float)(1.0 / span);
-        world.EndGrab(vel, kMaxThrowSpeed);
-        grabHistory.clear();
-    }
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) || paused) world.EndGrab(world.HandVelocity(), kMaxThrowSpeed);
 }
 
 void App::Simulate(float frameDt) {
