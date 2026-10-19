@@ -11,6 +11,7 @@
 #include "physics.h"
 #include "render.h"
 #include "shapes.h"
+#include "splash.h"
 #include "ui.h"
 
 namespace {
@@ -117,6 +118,7 @@ void App::Spawn(int forcedMode) {
 void App::Reset() {
     for (Body& b : world.bodies) renderer.DestroyBodyMesh(b);
     world.Clear();
+    splash::Clear();
     hovered = -1;
     grabHistory.clear();
     spawnTimer = 0;
@@ -216,6 +218,7 @@ void App::Simulate(float frameDt) {
     const int substeps = std::clamp((int)std::ceil(dt / (1.0f / 300.0f)), 2, 16);
     double t0 = GetTime();
     world.Step(dt, substeps);
+    splash::Update(world, dt);
     physicsMs = physicsMs * 0.9f + (float)(GetTime() - t0) * 1000.0f * 0.1f;
     simTime += dt;
 
@@ -371,6 +374,7 @@ int main(int argc, char** argv) {
     }
     ui::Init();
     audio::Init();
+    splash::Init();
     SetRandomSeed((unsigned)(GetTime() * 1e6) ^ 0x5eed);
     app.orbit.Update();
     app.Reset();
@@ -407,6 +411,7 @@ int main(int argc, char** argv) {
     }
 
     for (Body& b : app.world.bodies) app.renderer.DestroyBodyMesh(b);
+    splash::Shutdown();
     audio::Shutdown();
     ui::Shutdown();
     app.renderer.Shutdown();
