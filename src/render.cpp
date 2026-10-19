@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "rlgl.h"
+#include "splash.h"
 
 namespace {
 
@@ -760,6 +761,7 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
     R.platformS.F("causticStrength", R.caustics);
     R.platformS.F("time", time);
     DrawMesh(R.platform, R.platformS.mat, platformXf);
+    splash::DrawStains(cam, sky.lightDir, sky.lightColor, sky.ambientSky);
     EndMode3D();
     EndTextureMode();
 
@@ -789,6 +791,7 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
         DrawMesh(b.mesh, R.jelly.mat, MatrixIdentity());
     }
     EndBlendMode();
+    splash::DrawDroplets(cam, sky.lightDir, sky.lightColor, sky.ambientSky);
     EndMode3D();
     EndTextureMode();
 
