@@ -335,7 +335,8 @@ void App::UpdateBench(float frameDt) {
                       "Тест: %d желейок, %dx%d, тіні «%s», верт. синхр. %s\n"
                       "Середній FPS: %.1f   1%% low: %.1f FPS\n"
                       "Час кадру p95: %.2f мс   p99: %.2f мс   (кадрів: %zu)\n"
-                      "Фізика: %.2f мс/кадр",
+                      "Фізика: %.2f мс/кадр\n"
+                      "Результат збережено в jellies_benchmark.txt. Вихід — Esc",
                       (int)world.bodies.size(), GetScreenWidth(), GetScreenHeight(),
                       ShadowQualityName(renderer.GetShadowQuality()), vsync ? "увімк." : "вимк.", avgFps, low1, p95,
                       p99, f.size(), physicsMs);
@@ -392,7 +393,10 @@ int main(int argc, char** argv) {
 
         ui::BeginFrame();
         app.HandleInput();
-        if (app.bench) app.UpdateBench(frameDt);
+        if (app.bench) {
+            app.UpdateBench(frameDt);
+            if (!app.benchResult.empty() && IsKeyPressed(KEY_ESCAPE)) break;
+        }
         app.Simulate(frameDt);
         eyes::Update(app.world, frameDt);
         audio::Update(frameDt);
