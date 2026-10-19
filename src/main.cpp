@@ -226,6 +226,10 @@ void App::Simulate(float frameDt) {
         } else if (b.impactJelly > 1.6f) {
             audio::PlaySquelch(std::clamp((b.impactJelly - 1.6f) / 8.0f, 0.1f, 1.0f));
             b.soundCooldown = 0.3f;
+        } else if (b.unstick > 0.12f) {
+            // Sticky contact tearing apart
+            audio::PlaySquelch(std::clamp(b.unstick, 0.15f, 0.8f));
+            b.soundCooldown = 0.3f;
         }
     }
 
@@ -255,7 +259,7 @@ void App::DrawUI() {
     }
 
     const float x = 14, w = 300;
-    ui::Panel(Rectangle{x - 4, 8, w + 28, 356});
+    ui::Panel(Rectangle{x - 4, 8, w + 28, 408});
     float y = 18;
     ui::Label("Желейки", Vector2{x + 10, y}, 28, text);
     y += 42;
@@ -272,6 +276,9 @@ void App::DrawUI() {
     y += 52;
     std::snprintf(buf, sizeof buf, "%d%%", (int)std::round(softness * 100));
     ui::Slider(Rectangle{x + 10, y, w, 44}, "М’якість желе", buf, &softness, 0.0f, 1.0f);
+    y += 52;
+    std::snprintf(buf, sizeof buf, "%d%%", (int)std::round(world.params.stickiness * 100));
+    ui::Slider(Rectangle{x + 10, y, w, 44}, "Липкість", buf, &world.params.stickiness, 0.0f, 1.0f);
     y += 56;
 
     std::snprintf(buf, sizeof buf, "Тіні: %s", ShadowQualityName(renderer.GetShadowQuality()));

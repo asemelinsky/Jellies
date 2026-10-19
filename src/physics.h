@@ -2,6 +2,7 @@
 // (overlapping clusters + one global cluster), sub-stepping, velocity
 // clamping and a spatial hash for jelly-vs-jelly particle contacts.
 #pragma once
+#include <unordered_map>
 #include <vector>
 #include "shapes.h"
 
@@ -17,6 +18,7 @@ struct Body {
     float particleRadius = 0.08f;
     // Contact events gathered during the last Step() (for sounds)
     float impactGround = 0, impactJelly = 0;
+    float unstick = 0;  // strength of a sticky contact tearing apart
     float soundCooldown = 0;
     // Render data, owned by the renderer
     Mesh mesh = {};
@@ -33,6 +35,7 @@ struct PhysicsParams {
     float friction = 0.55f;
     float jellyFriction = 0.35f;
     float internalDamping = 1.6f;
+    float stickiness = 0.5f;    // 0 = none, 1 = very sticky (fresh contacts only)
 };
 
 class World {
@@ -69,6 +72,7 @@ private:
     void CollideParticles();
     void CollidePlatform();
     void DampBodies(float dt);
+    void UpdateSticky(float dt);
 
     const std::vector<ShapeTemplate>* tpl_;
     int nextId_ = 1;
@@ -91,4 +95,19 @@ private:
     std::vector<int> listA_, listB_;
 
     void CollideBodyPair(int a, int b);
+
+    // Stickiness: contact age per body pair (key from body ids) and per body
+    // with the platform (key with 0 as the second id). Adhesion is strong right
+    // after contact and fades within ~2 s.
+    struct StickyContact {
+        float age = 0;          // seconds spent in contact
+        float since = 0;        // seconds since the last contact
+        bool touched = false;   // in contact during the current Step
+        bool released = false;  // separation already reported
+    };
+    std::unordered_map<long long, StickyContact> sticky_;
+    std::vector<float> groundStick_;
+    std::vector<unsigned char> groundTouched_;
+    std::vector<Vector3> bodyVel_;  // mean velocity per body at the start of the Step
+    float subDt_ = 1.0f / 300.0f;
 };
