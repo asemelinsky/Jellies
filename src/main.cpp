@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <string>
+#include <vector>
 
 #include "audio.h"
 #include "physics.h"
@@ -60,20 +62,27 @@ struct App {
     float simTime = 0.0f;
     float physicsMs = 0.0f;
 
+    // Benchmark mode (--bench): 50 jellies, measure frame times
+    bool bench = false;
+    float benchClock = 0;
+    std::vector<float> benchFrames;
+    std::string benchResult;
+
     // Grabbing
     int hovered = -1;
     float grabPlaneDist = 0;
     std::deque<std::pair<double, Vector3>> grabHistory;
 
-    void Spawn();
+    void Spawn(int forcedMode = -1);
     void Reset();
     void HandleInput();
     void UpdateGrab();
     void Simulate(float dt);
     void DrawUI();
+    void UpdateBench(float frameDt);
 };
 
-void App::Spawn() {
+void App::Spawn(int forcedMode) {
     const int shape = GetRandomValue(0, SHAPE_COUNT - 1);
     const float scale = RandF(0.6f, 1.5f);
     const Vector3 color = kRainbow[GetRandomValue(0, 6)];
@@ -81,7 +90,8 @@ void App::Spawn() {
     const float g = std::max(world.params.gravity, 1.0f);
 
     Vector3 pos, vel;
-    const int mode = GetRandomValue(0, 2);  // 0 = from above, 1 = from the left, 2 = from the right
+    // 0 = from above, 1 = from the left, 2 = from the right
+    const int mode = forcedMode >= 0 ? forcedMode : GetRandomValue(0, 2);
     if (mode == 0) {
         pos = {RandF(-L * 0.6f, L * 0.6f), RandF(9.0f, 13.0f), RandF(-L * 0.6f, L * 0.6f)};
         vel = {0, -1.5f, 0};
@@ -209,9 +219,10 @@ void App::Simulate(float frameDt) {
     physicsMs = physicsMs * 0.9f + (float)(GetTime() - t0) * 1000.0f * 0.1f;
     simTime += dt;
 
-    // Remove jellies that fell off the platform
+    // Remove jellies that fell off the platform (or blew up numerically)
     for (int i = (int)world.bodies.size() - 1; i >= 0; i--) {
-        if (world.bodies[i].center.y < kKillY) {
+        const Vector3 c = world.bodies[i].center;
+        if (c.y < kKillY || !std::isfinite(c.x) || !std::isfinite(c.y) || !std::isfinite(c.z)) {
             renderer.DestroyBodyMesh(world.bodies[i]);
             world.RemoveBody(i);
         }
@@ -229,7 +240,7 @@ void App::Simulate(float frameDt) {
         }
     }
 
-    spawnTimer += frameDt;
+    spawnTimer += bench ? 0.0f : frameDt;
     if (spawnTimer >= kSpawnInterval) {
         spawnTimer -= kSpawnInterval;
         Spawn();
@@ -292,18 +303,67 @@ void App::DrawUI() {
 
 }  // namespace
 
+void App::UpdateBench(float frameDt) {
+    // 0..5 s: rain 50 jellies in; 5..25 s: measure; then show the result
+    const float kFill = 5.0f, kMeasure = 20.0f;
+    if (!benchResult.empty()) return;
+    benchClock += frameDt;
+    paused = false;
+    int want = benchClock < kFill ? (int)(50 * benchClock / kFill) + 1 : 50;
+    while ((int)world.bodies.size() < std::min(want, 50)) Spawn(0);
+    orbit.yaw += frameDt * 0.15f;  // slow camera orbit, like a real session
+    if (benchClock > kFill) benchFrames.push_back(frameDt);
+    if (benchClock > kFill + kMeasure && !benchFrames.empty()) {
+        std::vector<float> f = benchFrames;
+        std::sort(f.begin(), f.end());
+        double sum = 0;
+        for (float v : f) sum += v;
+        const float avgFps = (float)(f.size() / sum);
+        const float p95 = f[(size_t)(f.size() * 0.95)] * 1000.0f;
+        const float p99 = f[(size_t)(f.size() * 0.99)] * 1000.0f;
+        // "1% low": average FPS over the slowest 1% of frames
+        size_t n1 = std::max<size_t>(1, f.size() / 100);
+        double slow = 0;
+        for (size_t i = f.size() - n1; i < f.size(); i++) slow += f[i];
+        const float low1 = (float)(n1 / slow);
+        char buf[512];
+        std::snprintf(buf, sizeof buf,
+                      "Тест: %d желейок, %dx%d, тіні «%s», верт. синхр. %s\n"
+                      "Середній FPS: %.1f   1%% low: %.1f FPS\n"
+                      "Час кадру p95: %.2f мс   p99: %.2f мс   (кадрів: %zu)\n"
+                      "Фізика: %.2f мс/кадр",
+                      (int)world.bodies.size(), GetScreenWidth(), GetScreenHeight(),
+                      ShadowQualityName(renderer.GetShadowQuality()), vsync ? "увімк." : "вимк.", avgFps, low1, p95,
+                      p99, f.size(), physicsMs);
+        benchResult = buf;
+        if (FILE* fp = std::fopen("jellies_benchmark.txt", "w")) {
+            std::fprintf(fp, "%s\n", benchResult.c_str());
+            std::fclose(fp);
+        }
+    }
+}
+
 int main(int argc, char** argv) {
-    bool fullscreen = false;
-    for (int i = 1; i < argc; i++)
+    bool fullscreen = false, bench = false;
+    for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--fullscreen") == 0) fullscreen = true;
+        if (std::strcmp(argv[i], "--bench") == 0) bench = fullscreen = true;
+    }
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     InitWindow(1280, 720, "Желейки");
     SetExitKey(KEY_NULL);
     SetWindowMinSize(640, 400);
     if (fullscreen) ToggleBorderlessWindowed();
+    if (bench) {
+        // Measure headroom: no vsync, no frame cap
+        ClearWindowState(FLAG_VSYNC_HINT);
+        SetTargetFPS(0);
+    }
 
     static App app;
+    app.bench = bench;
+    if (bench) app.vsync = false;
     BuildShapeTemplates(app.templates);
     if (!app.renderer.Init(GetScreenWidth(), GetScreenHeight())) {
         CloseWindow();
@@ -326,6 +386,7 @@ int main(int argc, char** argv) {
 
         ui::BeginFrame();
         app.HandleInput();
+        if (app.bench) app.UpdateBench(frameDt);
         app.Simulate(frameDt);
         audio::Update(frameDt);
         app.renderer.UpdateBodyMeshes(app.world);
@@ -334,6 +395,14 @@ int main(int argc, char** argv) {
         BeginDrawing();
         app.renderer.Render(app.orbit.cam, app.world, sky, app.hovered, app.world.GrabbedBody(), app.simTime);
         app.DrawUI();
+        if (app.bench) {
+            const char* text = app.benchResult.empty() ? "Тест продуктивності… (25 с)" : app.benchResult.c_str();
+            Vector2 m = ui::Measure(text, 22);
+            Rectangle r = {GetScreenWidth() * 0.5f - m.x * 0.5f - 20, GetScreenHeight() * 0.5f - m.y * 0.5f - 16,
+                           m.x + 40, m.y + 32};
+            ui::Panel(r);
+            ui::Label(text, Vector2{r.x + 20, r.y + 16}, 22, Color{245, 245, 250, 255});
+        }
         EndDrawing();
     }
 
