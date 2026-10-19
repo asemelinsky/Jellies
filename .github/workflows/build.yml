@@ -1,0 +1,131 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64 (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/Release/Jelly.exe dist/Jellies-Windows-x64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jellies-Windows-x64
+          path: dist/Jellies-Windows-x64.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    # Ubuntu 22.04 userland keeps the glibc requirement low (2.35)
+    container: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake git ca-certificates \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: |
+          mkdir -p dist/Jellies
+          cp build/jelly dist/Jellies/jellies
+          strip dist/Jellies/jellies
+          chmod +x dist/Jellies/jellies
+          cat > dist/Jellies/README.txt <<'EOF'
+          Желейки — 3D-симуляція м'яких желейок
+
+          Запуск:  ./jellies          (повний екран: ./jellies --fullscreen)
+          Потрібна відеокарта з OpenGL 3.3 і встановлені драйвери (Mesa / NVIDIA / AMD).
+
+          Керування:
+            ЛКМ — схопити й кинути желейку     ПКМ — обертати камеру
+            Коліщатко — наближення             Пробіл — нова желейка (Shift — 10)
+            P — пауза   R — скинути сцену   H — сховати панель   M — звук
+            F11 — повний екран   V — вертикальна синхронізація
+
+          https://github.com/asemelinsky/Jellies
+          EOF
+          tar -C dist -czf Jellies-Linux-x64.tar.gz Jellies
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jellies-Linux-x64
+          path: Jellies-Linux-x64.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [windows, linux]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Versioned release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/Jellies-Windows-x64.exe dist/Jellies-Linux-x64.tar.gz \
+            --repo "$REPO" \
+            --title "Желейки ${{ github.ref_name }}" \
+            --notes "Збірка версії ${{ github.ref_name }}." \
+            --latest=false
+
+      - name: Rolling "latest" release
+        run: |
+          ls -la dist
+          gh release delete latest --yes --cleanup-tag --repo "$REPO" || true
+          cat > notes.md <<EOF
+          Автоматична збірка з коміту ${GITHUB_SHA::7}.
+
+          - **Windows 10/11 (64-bit):** [Jellies-Windows-x64.exe](https://github.com/$REPO/releases/latest/download/Jellies-Windows-x64.exe) — просто запустіть, інсталяція не потрібна.
+          - **Linux (x86-64):** [Jellies-Linux-x64.tar.gz](https://github.com/$REPO/releases/latest/download/Jellies-Linux-x64.tar.gz) — \`tar xzf Jellies-Linux-x64.tar.gz && cd Jellies && ./jellies\`
+          EOF
+          gh release create latest \
+            dist/Jellies-Windows-x64.exe dist/Jellies-Linux-x64.tar.gz \
+            --repo "$REPO" \
+            --target "$GITHUB_SHA" \
+            --title "Желейки — остання збірка" \
+            --notes-file notes.md \
+            --latest
