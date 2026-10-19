@@ -36,12 +36,21 @@ add_executable(jelly WIN32
     src/ui.cpp)
 target_link_libraries(jelly PRIVATE raylib)
 
+if(WIN32)
+    # Application icon + version info (MSVC rc.exe and MinGW windres)
+    enable_language(RC)
+    target_sources(jelly PRIVATE assets/jellies.rc)
+    target_include_directories(jelly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+    set_source_files_properties(assets/jellies.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico)
+endif()
+
 if(MSVC)
-    target_compile_options(jelly PRIVATE /W3 /O2 /fp:fast /utf-8)
+    # C++-only flags: keep them away from the resource compiler
+    target_compile_options(jelly PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/W3;/O2;/fp:fast;/utf-8>")
     # WIN32 subsystem (no console window) while keeping a regular main()
     target_link_options(jelly PRIVATE /ENTRY:mainCRTStartup)
 else()
-    target_compile_options(jelly PRIVATE -Wall -O2)
+    target_compile_options(jelly PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-O2>")
     if(WIN32)
         target_link_options(jelly PRIVATE -static -static-libgcc -static-libstdc++ -mwindows)
     else()
