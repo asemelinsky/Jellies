@@ -19,6 +19,7 @@ constexpr int kGlSrcAlpha = 0x0302;
 constexpr int kGlOneMinusSrcAlpha = 0x0303;
 constexpr int kGlDstColor = 0x0306;
 constexpr int kGlFuncAdd = 0x8006;
+constexpr int kGlMax = 0x8008;
 
 constexpr float kLightHalfExtent = 12.0f;  // half size of the shadow frustum (m)
 constexpr float kLightDistance = 40.0f;
@@ -54,10 +55,19 @@ out vec4 finalColor;
 void main() { finalColor = vec4(1.0); }
 )";
 
+// Jelly colour shadow: rgb = transmittance (multiplied), a = caustic focus
+// (max-blended). Faces looking straight at the light focus the most light.
 const char* kTintFS = R"(#version 330
+in vec3 fragPos;
+in vec3 fragNormal;
 uniform vec3 tint;
+uniform vec3 lightDir;
+uniform float causticGain;
 out vec4 finalColor;
-void main() { finalColor = vec4(tint, 1.0); }
+void main() {
+    float ndl = clamp(dot(normalize(fragNormal), lightDir), 0.0, 1.0);
+    finalColor = vec4(tint, pow(ndl, 3.0) * causticGain);
+}
 )";
 
 // Lighting helpers shared by every lit surface
@@ -87,6 +97,11 @@ const vec2 kPoisson[16] = vec2[16](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
     vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
 
+// Set by ShadowLight: caustic focus of the jellies in front of the light and
+// the light-space position (for the caustic pattern)
+float gCaustic = 0.0;
+vec2 gLightUV = vec2(0.0);
+
 // Light reaching worldPos: rgb transmittance through jellies, already
 // multiplied by the opaque visibility. opaqueVis = opaque-only visibility.
 vec3 ShadowLight(vec3 worldPos, vec3 N, out float opaqueVis) {
@@ -95,10 +110,12 @@ vec3 ShadowLight(vec3 worldPos, vec3 N, out float opaqueVis) {
     vec4 lp = lightVP * vec4(p, 1.0);
     vec3 c = lp.xyz / lp.w * 0.5 + 0.5;
     opaqueVis = 1.0;
+    gCaustic = 0.0;
+    gLightUV = c.xy;
     if (c.x <= 0.002 || c.x >= 0.998 || c.y <= 0.002 || c.y >= 0.998 || c.z >= 1.0) return vec3(1.0);
     float a = 6.2831853 * fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
     mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
-    float vis = 0.0;
+    float vis = 0.0, caus = 0.0;
     vec3 tint = vec3(0.0);
     for (int i = 0; i < 16; i++) {
         if (i >= shadowTaps) break;
@@ -108,18 +125,46 @@ vec3 ShadowLight(vec3 worldPos, vec3 N, out float opaqueVis) {
         else o = rot * kPoisson[i];
         vec2 uv = c.xy + o * shadowRadius * shadowTexel;
         float lit = (c.z - 0.0006 > texture(shadowOpaque, uv).r) ? 0.0 : 1.0;
-        vec3 t = (c.z - 0.0009 > texture(shadowJellyDepth, uv).r) ? texture(shadowJellyColor, uv).rgb : vec3(1.0);
+        bool behind = c.z - 0.0009 > texture(shadowJellyDepth, uv).r;
+        vec4 jc = behind ? texture(shadowJellyColor, uv) : vec4(1.0, 1.0, 1.0, 0.0);
         vis += lit;
-        tint += t * lit;
+        tint += jc.rgb * lit;
+        caus += jc.a * lit;
     }
     float n = float(min(shadowTaps, 16));
     opaqueVis = vis / n;
+    gCaustic = caus / n;
     return tint / n;
 }
 
 vec3 Ambient(vec3 N) { return mix(ambientGround, ambientSky, N.y * 0.5 + 0.5); }
 // Soft highlight roll-off so bright noon light does not clip to white
 vec3 Tone(vec3 c) { return vec3(1.0) - exp(-c * 1.45); }
+
+// Animated web of bright caustic lines (after Dave Hoskins' "Tileable Water Caustic")
+float CausticPattern(vec2 p, float t) {
+    vec2 i = p;
+    float c = 1.0;
+    const float inten = 0.005;
+    for (int n = 0; n < 4; n++) {
+        float tt = t * (1.0 - (3.5 / float(n + 1)));
+        i = p + vec2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+        c += 1.0 / length(vec2(p.x / (sin(i.x + tt) / inten), p.y / (cos(i.y + tt) / inten)));
+    }
+    c /= 4.0;
+    c = 1.17 - pow(c, 1.4);
+    return clamp(pow(abs(c), 8.0), 0.0, 2.0);
+}
+
+// Coloured light focused by the jellies in front of the light
+vec3 Caustics(vec3 transmit, float ndl, float strength, float time) {
+    if (gCaustic < 0.002 || strength <= 0.0) return vec3(0.0);
+    vec3 hue = transmit / max(max(transmit.r, transmit.g), max(transmit.b, 1e-3));
+    hue = pow(hue, vec3(1.6));
+    float pat = CausticPattern(gLightUV * 125.0, time * 0.9);
+    float focus = gCaustic * gCaustic;  // concentrate towards the centre of the pool
+    return lightColor * hue * (focus * 0.9 + gCaustic * pat * 2.4) * ndl * strength;
+}
 vec3 SkyColor(vec3 d) { return mix(horizonColor, zenithColor, pow(clamp(d.y, 0.0, 1.0), 0.55)); }
 )";
 
@@ -174,6 +219,8 @@ in vec3 fragPos;
 in vec3 fragNormal;
 out vec4 finalColor;
 uniform float platformHalf;
+uniform float causticStrength;
+uniform float time;
 
 void main() {
     vec3 N = normalize(fragNormal);
@@ -198,7 +245,8 @@ void main() {
     vec3 V = normalize(camPos - fragPos);
     vec3 H = normalize(lightDir + V);
     float spec = pow(max(dot(N, H), 0.0), 48.0) * 0.12;
-    vec3 col = base * (Ambient(N) * 0.85 + lightColor * ndl * sh * 0.85) + lightColor * sh * spec;
+    vec3 col = base * (Ambient(N) * 0.85 + (lightColor * ndl * sh + Caustics(sh, ndl, causticStrength, time)) * 0.9) +
+               lightColor * sh * spec;
     finalColor = vec4(Tone(col), 1.0);
 }
 )";
@@ -456,6 +504,7 @@ struct Renderer::Impl {
 
     int shadowSize = 0, taps = 16;
     float softness = 0.04f;  // PCF radius in metres
+    float caustics = 1.0f;   // 0 disables coloured caustics
     unsigned shOpaqueDepth = 0, shOpaqueColor = 0, shJellyDepth = 0, shJellyColor = 0;
     RenderTexture2D rtShOpaque = {}, rtShJelly = {};
 
@@ -487,10 +536,10 @@ struct Renderer::Impl {
     void CreateShadowTargets(int quality) {
         DestroyShadowTargets();
         switch (quality) {
-            case SHADOW_LOW: shadowSize = 1024; taps = 4; softness = 0.035f; break;
-            case SHADOW_MEDIUM: shadowSize = 2048; taps = 9; softness = 0.03f; break;
-            case SHADOW_HIGH: shadowSize = 2048; taps = 16; softness = 0.045f; break;
-            default: shadowSize = 4096; taps = 16; softness = 0.05f; break;
+            case SHADOW_LOW: shadowSize = 1024; taps = 4; softness = 0.035f; caustics = 0.0f; break;
+            case SHADOW_MEDIUM: shadowSize = 2048; taps = 9; softness = 0.03f; caustics = 1.0f; break;
+            case SHADOW_HIGH: shadowSize = 2048; taps = 16; softness = 0.045f; caustics = 1.0f; break;
+            default: shadowSize = 4096; taps = 16; softness = 0.05f; caustics = 1.0f; break;
         }
         const int s = shadowSize;
         shOpaqueDepth = rlLoadTextureDepth(s, s, false);
@@ -544,7 +593,7 @@ bool Renderer::Init(int width, int height) {
     Impl& R = *impl_;
     bool ok = true;
     ok &= R.depth.Load(kDepthVS, kDepthFS);
-    ok &= R.tint.Load(kDepthVS, kTintFS);
+    ok &= R.tint.Load(kLitVS, kTintFS);
     ok &= R.skyS.Load(kLitVS, WithCommon(kSkyFS));
     ok &= R.platformS.Load(kLitVS, WithCommon(kPlatformFS));
     ok &= R.seaS.Load(kLitVS, WithCommon(kSeaFS));
@@ -647,7 +696,7 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
 
     auto beginLight = [&](RenderTexture2D rt) {
         BeginTextureMode(rt);
-        ClearBackground(WHITE);
+        ClearBackground({255, 255, 255, 0});
         BeginMode3D(dummy);
         rlSetMatrixProjection(lightProj);
         rlSetMatrixModelview(lightView);
@@ -669,8 +718,10 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
     rlColorMask(true, true, true, true);
     rlDisableDepthTest();
     rlDisableDepthMask();
-    rlSetBlendFactors(kGlDstColor, kGlZero, kGlFuncAdd);
-    BeginBlendMode(BLEND_CUSTOM);
+    rlSetBlendFactorsSeparate(kGlDstColor, kGlZero, kGlOne, kGlOne, kGlFuncAdd, kGlMax);
+    BeginBlendMode(BLEND_CUSTOM_SEPARATE);
+    R.tint.V3("lightDir", L);
+    R.tint.F("causticGain", R.caustics);
     for (const Body& b : world.bodies) {
         if (!b.meshReady) continue;
         R.tint.V3("tint", Mix3(b.color, {1, 1, 1}, 0.25f) * 0.6f);
@@ -706,6 +757,8 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
 
     R.SetCommon(R.platformS, sky, cam.position, lightVP);
     R.platformS.F("platformHalf", R.platHalf);
+    R.platformS.F("causticStrength", R.caustics);
+    R.platformS.F("time", time);
     DrawMesh(R.platform, R.platformS.mat, platformXf);
     EndMode3D();
     EndTextureMode();
