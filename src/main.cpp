@@ -390,6 +390,7 @@ bool App::Frame() {
     BeginDrawing();
     renderer.Render(orbit.cam, world, sky, hovered, world.GrabbedBody(), simTime);
     DrawUI();
+    basket::SetCamera(orbit.cam);
     basket::DrawHUD();
     if (bench) {
         const char* text = benchResult.empty() ? "Тест продуктивності… (25 с)" : benchResult.c_str();
