@@ -253,10 +253,10 @@ void Update(const World& world, float dt) {
         const bool grounded = minY <= top + r * 1.3f && OverPlatform(p);
 
         // Ground impact: puddle + droplets
-        if (grounded && tr.cooldown <= 0 && b.impactGround > 3.0f) {
+        if (grounded && tr.cooldown <= 0 && b.impactGround > 4.0f) {
             const float s = b.impactGround;
-            AddStain(p, b.color, std::min((footprint + r) * 1.25f + 0.04f * s * b.scale, 1.2f * b.scale), 9.0f,
-                     std::min(0.45f + 0.03f * s, 0.75f));
+            AddStain(p, b.color, std::min((footprint + r) * 0.95f + 0.03f * s * b.scale, 0.8f * b.scale), 6.0f,
+                     std::min(0.22f + 0.02f * s, 0.42f));
             if (s > 4.0f) {
                 int count = std::clamp((int)((s - 3.0f) * 1.4f * b.scale), 2, 12);
                 Burst(p, b.color, s, b.scale, count, 1.0f);
@@ -280,7 +280,7 @@ void Update(const World& world, float dt) {
                 tr.lastTrail = flat;
                 tr.hasTrail = true;
             } else if (Len(flat - tr.lastTrail) >= 0.15f) {
-                AddStain(flat, b.color, RandF(0.12f, 0.2f) * b.scale + footprint * 0.35f, 6.5f, 0.32f);
+                AddStain(flat, b.color, RandF(0.1f, 0.16f) * b.scale + footprint * 0.3f, 5.0f, 0.2f);
                 tr.lastTrail = flat;
             }
         } else if (!grounded) {
@@ -304,7 +304,7 @@ void Update(const World& world, float dt) {
         d.p += d.v * dt;
         bool dead = false;
         if (prev.y - d.r >= top - 0.05f && d.p.y - d.r <= top && OverPlatform(d.p)) {
-            AddStain(d.p, d.color, d.r * RandF(2.4f, 3.6f), 7.0f, 0.55f);
+            AddStain(d.p, d.color, d.r * RandF(1.8f, 2.6f), 5.0f, 0.35f);
             dead = true;
         } else if (d.p.y < -30.0f) {
             dead = true;
