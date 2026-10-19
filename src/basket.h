@@ -12,6 +12,7 @@ bool Enabled();
 void Reset();              // scene reset: score and round restart
 void Update(World& world, float dt);  // scoring, basket movement
 void AppendSceneObjects(std::vector<SceneObject>& out);
+void SetCamera(const Camera3D& cam);  // for score pop-ups in screen space
 void DrawHUD();            // 2D overlay (score, time, record); after the UI panel
 
 }  // namespace basket
