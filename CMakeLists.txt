@@ -32,6 +32,7 @@ add_executable(jelly WIN32
     src/render.cpp
     src/audio.cpp
     src/splash.cpp
+    src/eyes.cpp
     src/ui.cpp)
 target_link_libraries(jelly PRIVATE raylib)
 

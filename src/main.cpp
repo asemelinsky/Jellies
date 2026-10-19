@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "audio.h"
+#include "eyes.h"
 #include "physics.h"
 #include "render.h"
 #include "shapes.h"
@@ -368,6 +369,7 @@ int main(int argc, char** argv) {
     app.bench = bench;
     if (bench) app.vsync = false;
     BuildShapeTemplates(app.templates);
+    eyes::Init(app.templates);
     if (!app.renderer.Init(GetScreenWidth(), GetScreenHeight())) {
         CloseWindow();
         return 1;
@@ -392,6 +394,7 @@ int main(int argc, char** argv) {
         app.HandleInput();
         if (app.bench) app.UpdateBench(frameDt);
         app.Simulate(frameDt);
+        eyes::Update(app.world, frameDt);
         audio::Update(frameDt);
         app.renderer.UpdateBodyMeshes(app.world);
         SkyState sky = ComputeSky(app.dayPhase);
@@ -413,6 +416,7 @@ int main(int argc, char** argv) {
     for (Body& b : app.world.bodies) app.renderer.DestroyBodyMesh(b);
     splash::Shutdown();
     audio::Shutdown();
+    eyes::Shutdown();
     ui::Shutdown();
     app.renderer.Shutdown();
     CloseWindow();

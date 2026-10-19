@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "rlgl.h"
+#include "eyes.h"
 #include "splash.h"
 
 namespace {
@@ -791,6 +792,7 @@ void Renderer::Render(const Camera3D& cam, const World& world, const SkyState& s
         DrawMesh(b.mesh, R.jelly.mat, MatrixIdentity());
     }
     EndBlendMode();
+    eyes::Draw(world, cam, sky.lightDir, sky.lightColor, (sky.ambientSky + sky.ambientGround) * 0.5f);
     splash::DrawDroplets(cam, sky.lightDir, sky.lightColor, sky.ambientSky);
     EndMode3D();
     EndTextureMode();
