@@ -118,6 +118,8 @@ vec3 ShadowLight(vec3 worldPos, vec3 N, out float opaqueVis) {
 }
 
 vec3 Ambient(vec3 N) { return mix(ambientGround, ambientSky, N.y * 0.5 + 0.5); }
+// Soft highlight roll-off so bright noon light does not clip to white
+vec3 Tone(vec3 c) { return vec3(1.0) - exp(-c * 1.45); }
 vec3 SkyColor(vec3 d) { return mix(horizonColor, zenithColor, pow(clamp(d.y, 0.0, 1.0), 0.55)); }
 )";
 
@@ -196,8 +198,8 @@ void main() {
     vec3 V = normalize(camPos - fragPos);
     vec3 H = normalize(lightDir + V);
     float spec = pow(max(dot(N, H), 0.0), 48.0) * 0.12;
-    vec3 col = base * (Ambient(N) + lightColor * ndl * sh) + lightColor * sh * spec;
-    finalColor = vec4(col, 1.0);
+    vec3 col = base * (Ambient(N) * 0.85 + lightColor * ndl * sh * 0.85) + lightColor * sh * spec;
+    finalColor = vec4(Tone(col), 1.0);
 }
 )";
 
@@ -210,10 +212,16 @@ uniform float time;
 void main() {
     vec3 V = normalize(camPos - fragPos);
     vec2 p = fragPos.xz;
-    vec3 N = normalize(vec3(
-        0.07 * cos(p.x * 0.15 + time * 0.9) + 0.04 * cos(p.y * 0.23 + p.x * 0.07 + time * 1.3) + 0.03 * cos((p.x + p.y) * 0.6 + time * 2.1),
-        1.0,
-        0.07 * sin(p.y * 0.17 + time * 0.8) + 0.04 * sin(p.x * 0.21 - p.y * 0.05 + time * 1.1) + 0.03 * sin((p.x - p.y) * 0.55 + time * 1.9)));
+    vec2 g = vec2(0.0);
+    vec2 dirs[5] = vec2[5](vec2(0.94, 0.34), vec2(-0.41, 0.91), vec2(0.62, -0.78), vec2(-0.87, -0.49), vec2(0.17, 0.98));
+    float freq = 0.11, amp = 0.06, speed = 0.8;
+    for (int i = 0; i < 5; i++) {
+        float ph = dot(dirs[i], p) * freq + time * speed + float(i) * 1.7;
+        g += dirs[i] * cos(ph) * amp;
+        freq *= 1.83; amp *= 0.62; speed *= 1.27;
+    }
+    float far = clamp(length(fragPos - camPos) / 300.0, 0.0, 1.0);
+    vec3 N = normalize(vec3(g.x * (1.0 - far * 0.7), 1.0, g.y * (1.0 - far * 0.7)));
     float ndv = max(dot(N, V), 0.0);
     float F = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
     vec3 R = reflect(-V, N);
@@ -226,7 +234,7 @@ void main() {
     col += lightColor * sh * pow(max(dot(N, H), 0.0), 220.0) * 1.6;
     float dist = length(fragPos - camPos);
     float fog = 1.0 - exp(-dist * 0.0035);
-    col = mix(col, horizonColor, fog);
+    col = mix(Tone(col), horizonColor, fog);
     finalColor = vec4(col, 1.0);
 }
 )";
@@ -280,7 +288,7 @@ void main() {
     vec3 spec = lightColor * sh * (pow(nh, 160.0) * 2.4 + pow(nh, 24.0) * 0.08);
 
     vec3 R = reflect(-V, N);
-    vec3 col = refr * 0.78 + body * 0.6;
+    vec3 col = refr * 0.7 + body * 0.75 + jellyColor * (0.05 + 0.07 * (1.0 - ndv));
     col = mix(col, SkyColor(R), F * 0.85) + glow + spec;
     col += jellyColor * highlight * (0.25 + 0.75 * pow(1.0 - ndv, 2.0)) * 0.55;
     finalColor = vec4(col, mix(0.8, 0.95, F));

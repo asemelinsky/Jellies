@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['v*']
   workflow_dispatch:
 
@@ -89,7 +89,8 @@ jobs:
   release:
     name: Publish release
     needs: [windows, linux]
-    if: github.event_name == 'push'
+    # Branches other than main are only built (CI check), not released
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
