@@ -63,12 +63,21 @@ jobs:
           mkdir -p dist/Jellies
           cp build/jelly dist/Jellies/jellies
           strip dist/Jellies/jellies
-          chmod +x dist/Jellies/jellies
+          cp assets/icon.png dist/Jellies/icon.png
+          cp packaging/linux/install.sh packaging/linux/uninstall.sh dist/Jellies/
+          chmod +x dist/Jellies/jellies dist/Jellies/install.sh dist/Jellies/uninstall.sh
           cat > dist/Jellies/README.txt <<'EOF'
           Желейки — 3D-симуляція м'яких желейок
 
-          Запуск:  ./jellies          (повний екран: ./jellies --fullscreen)
+          Запуск без встановлення:  ./jellies          (повний екран: ./jellies --fullscreen)
+
+          Встановлення (без sudo, лише для вашого користувача):
+            ./install.sh
+          Після цього «Желейки» з'являться в меню програм, а в терміналі працюватиме команда `jellies`.
+          Видалення: ~/.local/share/jellies/uninstall.sh
+
           Потрібна відеокарта з OpenGL 3.3 і встановлені драйвери (Mesa / NVIDIA / AMD).
+          Тест продуктивності (50 желейок, ~25 с): ./jellies --bench  → результат у jellies_benchmark.txt
 
           Керування:
             ЛКМ — схопити й кинути желейку     ПКМ — обертати камеру
